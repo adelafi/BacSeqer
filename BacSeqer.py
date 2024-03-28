@@ -48,21 +48,6 @@ def calculate_gc_content(seq):
     return (seq.count('G') + seq.count('C')) / len(seq)
 
 
-def get_region_sequence(seq, start, end):
-    """
-    Extrahuje podsekvenci ze zadané sekvence.
-
-    Args:
-        seq (str): Sekvence, ze které má být podsekvence extrahována.
-        start (int): Počáteční index, od kterého má být podsekvence extrahována.
-        end (int): Konečný index, do kterého má být podsekvence extrahována.
-
-    Returns:
-        Podsekvence sekvence 'seq', která začíná indexem 'start' a končí indexem 'end'.
-    """
-    return seq[start:end]
-
-
 def extract_operons_from_gff(gff_path):
     """
     Extrahuje operony a jejich umístění ze souboru GFF.
