@@ -1,13 +1,12 @@
-## BacSeqer
+# BacSeqer
 
 # Author: Adela Fialova
 # Python 3.10.
+# Last update: 28. 03. 2024
 
 
 import random
-import pandas as pd
-import numpy as np
-from Bio import SeqIO
+import re
 
 
 def read_fasta(file_path):
@@ -15,10 +14,10 @@ def read_fasta(file_path):
     Načte FASTA soubor a vrátí sekvence.
 
     Args:
-    file_path (str): Cesta k FASTA souboru.
+        file_path (str): Cesta k FASTA souboru.
 
     Returns:
-    seqs: Slovník, kde klíč je název sekvence a hodnota je samotná sekvence.
+        seqs (dict): Slovník, kde klíč je název sekvence a hodnota je samotná sekvence.
     """
     with open(file_path, 'r') as file:                  # otevreni souboru
         seqs = {}                                       # prazdny slovnik pro ukladani sekvenci
@@ -36,113 +35,269 @@ def read_fasta(file_path):
     return seqs                                         # vraceni slovniku se vsemi sekvencemi
 
 
-def read_gtf_for_fasta(gtf_path):
+def calculate_gc_content(seq):
     """
-    Načte GTF soubor a vrátí lokace pro extrakci sekvencí.
+    Spočítá GC content pro načtené sekvence.
 
     Args:
-    gtf_path (str): Cesta k GTF souboru.
+        seq (str): Sekvence.
 
     Returns:
-    dict: Slovník, kde klíč je název sekvence a hodnota je seznam tuple (start, end).
+        gc_content (float): %GC content načtené sekvence.
     """
-    seq_locations = {}                                  # vytvoreni slovniku pro ukladani seznamu lokaci
-    with open(gtf_path, 'r') as file:                   # otevreni GTF souboru
-        for line in file:                               # prochazeni souboru po radcich
-            if line.startswith('#'):                    # hledani zacatku komentare
-                continue                                # preskoceni komentare
-            parts = line.strip().split('\t')            # odstraneni znaku na zacatku a na konci radku, rozdeleni radku na casti pomoci tabulatoru
-            seq_name = parts[0]                         # ulozeni nazvu sekvence
-            start = int(parts[3])                       # prevod zacatku lokace na cele cislo
-            end = int(parts[4])                         # prevod konce lokace na cele cislo
-
-            if seq_name not in seq_locations:           # inicializace prazdneho seznamu pro nazev sekvence, pokud jeste neni ve slovniku
-                seq_locations[seq_name] = []
-            seq_locations[seq_name].append((start, end))# pridani zacatku a konce do seznamu lokaci pro danou sekvenci
-    return seq_locations                                # vraceni slovniku lokaci
+    return (seq.count('G') + seq.count('C')) / len(seq)
 
 
-def extract_sequence(sequence, locs):
+def get_region_sequence(seq, start, end):
     """
-    Extrahuje a spojí podsekvence na základě lokací.
+    Extrahuje podsekvenci ze zadané sekvence.
 
     Args:
-    sequence (str): Celá sekvence.
-    locs (list of tuple): Seznam lokací (start, end).
+        seq (str): Sekvence, ze které má být podsekvence extrahována.
+        start (int): Počáteční index, od kterého má být podsekvence extrahována.
+        end (int): Konečný index, do kterého má být podsekvence extrahována.
 
     Returns:
-    str: Spojená podsekvence.
+        Podsekvence sekvence 'seq', která začíná indexem 'start' a končí indexem 'end'.
     """
-    extracted = ''                                      # vytvoreni prazdneho retezce pro pridavani podsekvenci
-    for start, end in locs:                             # prochazeni seznamu lokaci
-        extracted += sequence[start-1:end]              # extrakce podsekvence (-1 protoze GTF je 1-based)
-    return extracted                                    # vraceni spojene extrahovane sekvence
+    return seq[start:end]
 
 
-def extract_sequences_from_fasta(fasta_path, locations):
+def extract_operons_from_gff(gff_path):
     """
-    Extrahuje sekvence z FASTA souboru na základě lokací z GTF.
+    Extrahuje operony a jejich umístění ze souboru GFF.
 
     Args:
-    fasta_path (str): Cesta k FASTA souboru.
-    locations (dict): Slovník lokací získaných z GTF.
+        gff_path (str): Cesta k souboru GFF.
 
     Returns:
-    dict: Slovník, kde klíč je název sekvence a hodnota je sekvence.
+        operons (dict): Slovník s názvy operonů jako klíči a jejich umístěními jako hodnotami.
     """
-    seqs = {}                                           # vytvoreni prazdneho slovniku pro ukladani sekvenci
-    with open(fasta_path, 'r') as file:                 # otevreni FASTA souboru
-        current_seq = ""                                # prazdny retezec pro aktualne ctenou sekvenci
-        current_seq_name = ""                           # prazdny retezec pro nazev aktualne ctene sekvence
-        for line in file:                               # prochazeni souboru radek po radku
-            if line.startswith('>'):                    # hledani hlavicky
-                if current_seq_name and current_seq_name in locations: # kontrola spravne nactene sekvence
-                    seqs[current_seq_name] = extract_sequence(current_seq, locations[current_seq_name]) # ulozeni extrahovane sekvence do slovniku
-                current_seq_name = line.strip().split()[0][1:] # nastaveni nazvu nove sekvence
-                current_seq = ""                        # resetovani aktualni sekvence
-            else:
-                current_seq += line.strip()             # pridavani retezcu sekvence do current_seq
-        if current_seq_name and current_seq_name in locations: # pro posledni sekvenci
-            seqs[current_seq_name] = extract_sequence(current_seq, locations[current_seq_name])
-    return seqs                                         # vraceni slovniku s extrahovanymi sekvencemi
+    operons = {}
+    with open(gff_path, 'r') as file:
+        for line in file:
+            if line.startswith('#') or line.strip() == "":
+                continue  # preskoceni hlavicek a prazdnych radku
+            parts = line.strip().split('\t')
+            if len(parts) < 9:
+                continue  # preskoceni neuplnych radku
 
-# Příklad použití
-#locations = read_gtf_for_fasta('GTFtry.gtf')
-#sequences = extract_sequences_from_fasta('FASTAtry.fna', locations)
+            attributes = parts[8]
 
+            # kontrola pritomnosti "Operon" v atributu "Note"
+            note_match = re.search(r'Note=Operon\s+(\d+)', attributes)
+            if note_match:
+                operon_number = note_match.group(1)
+                operon_name = f"Operon {operon_number}"
+                location = (parts[0], int(parts[3]), int(parts[4]))  # (seqname, začátek, konec)
 
-def assign_expression_to_transcripts(seqs, mu):
-    """
-    Přiřadí každé sekvenci v 'seqs' náhodnou expresní úroveň z geometrické distribuce.
-
-    Args:
-    seqs (dict): Slovník sekvencí s klíčem jako názvem sekvence a hodnotou jako sekvencí.
-    mu (float): Průměrný počet neúspěchů před prvním úspěchem pro geometrickou distribuci.
-
-    Returns:
-    dict: Slovník s klíčem jako názvem sekvence a hodnotou jako expresní úroveň.
-    """
-    expression_levels = {}
-    for seq_name in seqs.keys():
-        # Geometrická distribuce očekává pravděpodobnost 'p' jako parametr
-        p = 1 / (mu + 1)
-        expression_level = np.random.geometric(p)
-        expression_levels[seq_name] = expression_level
-    return expression_levels
-
-
-def simulate_reads(seqs, read_length, num_reads, gc_content):
-    reads = []
-    for seq_name, seq in seqs.items():
-        for _ in range(num_reads):
-            read = ""
-            for _ in range(read_length):
-                # Zde je zavedena pravděpodobnost pro výběr GC nebo AT s ohledem na celkový GC obsah
-                if random.random() < gc_content:
-                    read += random.choice(["G", "C"])
+                # pridat umisteni do slovniku, pripojit, pokud operon uz existuje
+                if operon_name in operons:
+                    operons[operon_name].append(location)
                 else:
-                    read += random.choice(["A", "T"])
-            reads.append((seq_name, read))
+                    operons[operon_name] = [location]
+    return operons
+
+
+def extract_rrna_from_gff(gff_path):
+    """
+    Zpracovává soubor GFF za účelem extrakce anotací rRNA.
+
+    Args:
+        gff_path (str): Cesta k souboru GFF.
+
+    Returns:
+        rrna_annotations (list): Seznam slovníků, kde každý reprezentuje anotaci rRNA s klíči jako 'start', 'end',
+                                 'type' a 'attributes'.
+    """
+    rrna_annotations = []
+
+    with open(gff_path, 'r') as file:
+        for line in file:
+            if line.startswith('#') or line.strip() == '':
+                continue  # preskocit komentare a prazdne radky
+
+            fields = line.strip().split('\t')
+            if len(fields) == 9:
+                # rozdeleni radku na jednotlive casti
+                seq_id, source, feature_type, start, end, score, strand, phase, attributes = fields
+
+                if feature_type == 'rRNA':
+                    attr_dict = {}
+                    for attr in attributes.split(';'):
+                        # rozdeleni atributu na klice a hodnoty
+                        key, value = attr.split('=')
+                        attr_dict[key] = value
+
+                    # pridani anotace rRNA do seznamu
+                    rrna_annotations.append({
+                        'seq_id': seq_id,  # identifikator sekvence
+                        'start': int(start),  # pocatecni pozice
+                        'end': int(end),  # koncova pozice
+                        'strand': strand,  # smer retezce
+                        'attributes': attr_dict  # dalsi atributy
+                    })
+    return rrna_annotations
+
+
+def calculate_rrna_percentage(fasta_path, gff_path, read_fasta_func):
+    """
+    Vypočítá procento rRNA v sadě sekvencí.
+
+    Args:
+        fasta_path (str): Cesta k souboru FASTA.
+        gff_path (str): Cesta k souboru GTF/GFF.
+        read_fasta_func (funkce): Funkce pro čtení souboru FASTA (dostupná v tomto programu - read_fasta).
+
+    Returns:
+        float: Procento rRNA v celkovém množství sekvencí.
+    """
+    # nacteni sekvenci ze souboru FASTA
+    sequences = read_fasta_func(fasta_path)
+    total_sequence_length = sum(len(seq) for seq in sequences.values())
+
+    # extrahovani anotaci rRNA ze souboru GTF/GFF
+    rrna_annotations = extract_rrna_from_gff(gff_path)
+
+    # vypocet celkove delky sekvenci rRNA
+    rrna_total_length = 0
+    for annotation in rrna_annotations:
+        start, end = annotation['start'], annotation['end']
+        rrna_total_length += end - start + 1
+
+    # vypocet a vraceni procentualniho podilu rRNA
+    return (rrna_total_length / total_sequence_length) * 100
+
+
+def extract_gene_name(attributes, file_type):
+    """
+    Extrahuje název genu z pole atributů.
+    Pracuje s formáty GTF/GFF.
+
+    Args:
+        attributes (str): Řetězec obsahující atributy.
+        file_type (str): Typ souboru ('GTF' nebo 'GTF'/'GFF3').
+
+    Returns:
+        str nebo None: Název genu nebo None, pokud není nalezen.
+    """
+    if file_type == 'GTF':
+        # GTF format: gene_id "gene_name"; ...
+        for attribute in attributes.split(';'):
+            if attribute.strip().startswith('gene_id'):
+                return attribute.split('"')[1]
+    else:
+        # GFF3 format: ID=gene0;Name=gene_name;...
+        for attribute in attributes.split(';'):
+            key, _, value = attribute.partition('=')
+            if key == 'ID' or key == 'Name':
+                return value
+    return None
+
+
+def parse_gtf_gff_for_strand(file_path):
+    """
+    Zpracovává soubor GTF nebo GFF3 a vrací slovník, kde jsou klíče názvy/ID genů
+    a hodnoty informace o vláknech ('+' nebo '-').
+
+    Args:
+        file_path (str): Cesta k souboru GTF nebo GFF3.
+
+    Returns:
+        strand_info (dict): Slovník s názvy/ID genů jako klíči a informacemi o vláknech jako hodnotami.
+    """
+    strand_info = {}
+    file_type = 'GTF' if file_path.endswith('.gtf') else 'GFF3'
+    with open(file_path, 'r') as file:
+        for line in file:
+            if line.startswith('#'):
+                continue
+            fields = line.strip().split('\t')
+            if len(fields) < 9:
+                continue
+            gene_info = fields[8]
+            strand = fields[6]
+            gene_name = extract_gene_name(gene_info, file_type)
+            if gene_name:
+                strand_info[gene_name] = strand
+    return strand_info
+
+
+def reverse_complement(seq):
+    """
+    Vrací reverzní komplementární sekvenci pro zadanou DNA sekvenci.
+
+    Args:
+        seq (str): DNA sekvence, která má být převedena na její reverzní komplement.
+
+    Returns:
+        str: Reverzní komplementární sekvence k zadané DNA sekvenci.
+    """
+    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
+    return ''.join(complement[base] for base in reversed(seq))
+
+
+def simulate_reads(seqs, read_length, num_reads, gc_content, operon_locations, strand_info):
+    """
+    Simuluje čtení na základě poskytnutých sekvencí.
+
+    Args:
+        seqs (dict): Slovník sekvencí, kde klíče jsou názvy sekvencí a hodnoty jsou sekvence.
+        read_length (int): Délka čtení.
+        num_reads (int): Počet čtení, které mají být simulovány pro každou sekvenci.
+        gc_content (float nebo None): Obsah GC. Pokud není poskytnut, bude vypočítán.
+        operon_locations (dict nebo None): Slovník s lokacemi operonů pro každou sekvenci.
+        strand_info (dict nebo None): Informace o vláknech pro každou sekvenci.
+
+    Returns:
+        reads (list): Seznam čtení jako dvojic (název_sekvence, čtení).
+        """
+    reads = []
+
+    # prochazeni kazde sekvence a generovani cteni
+    for seq_name, seq in seqs.items():
+        strand = strand_info.get(seq_name, "both") if strand_info else "both"
+
+        # pokud neni obsah GC poskytnut, vypocita se pomoci funkce calculate_gc_content
+        if gc_content is None:
+            gc_content = calculate_gc_content(seq)
+
+        if operon_locations:
+            operons = operon_locations.get(seq_name, [])
+
+            # generovani zadaneho poctu cteni pro aktualni sekvenci
+            for _ in range(num_reads):
+                # nahodny vyber pocatecni pozice pro cteni
+                start_pos = random.randint(0, len(seq) - read_length)
+                read_gc_content = gc_content
+
+                # kontrola, zda je cteni v oblasti nejakeho operonu, a nastaveni prislusneho GC obsahu
+                for start, end in operons:
+                    if start <= start_pos < end:
+                        read_gc_content = gc_content[(start, end)]
+                        break
+
+                read = ""
+                for _ in range(read_length):
+                    if random.random() < gc_content:
+                        read += random.choice(["G", "C"])
+                    else:
+                        read += random.choice(["A", "T"])
+                if strand == "reversed" or (strand == "both" and random.choice([True, False])):
+                    read = reverse_complement(read)
+                reads.append((seq_name, read))
+
+        else:  # jinak simulovano bez zohledneni operonu
+            for _ in range(num_reads):
+                read = ""
+                for _ in range(read_length):
+                    if random.random() < gc_content:
+                        read += random.choice(["G", "C"])
+                    else:
+                        read += random.choice(["A", "T"])
+                if strand == "reversed" or (strand == "both" and random.choice([True, False])):
+                    read = reverse_complement(read)
+                reads.append((seq_name, read))
     return reads
 
 
@@ -151,66 +306,86 @@ def phred_to_ascii(phred_score):
     Převod Phred score do hodnot ASCII.
 
     Args:
-    phred_score (int): Phred quality score (běžně v rozmezí 0 až 40).
+        phred_score (int): Phred quality score (běžně v rozmezí 0 až 40).
 
     Returns:
-    str: Odpovídající hodnota ASCII.
+        str: Odpovídající hodnota ASCII.
     """
     return chr(phred_score + 33)
 
-# Example usage:
-# score = 32
-# print(f'Phred score {score} -> ASCII character: {phred_to_ascii(score)}')
 
-
-def generate_quality_scores(length, max_quality=65, min_quality=61):
+def generate_quality_scores(length, max_quality, min_quality):
     """
     Generuje klesající kvalitní skóre pro danou délku sekvence.
+    Pokud nejsou zadány hraniční hodnoty, jsou odhadnuty na základě platformy Illumina.
 
     Args:
-    length (int): Délka sekvence.
-    max_quality (int): Maximální ASCII hodnota pro kvalitní skóre na začátku sekvence.
-    min_quality (int): Minimální ASCII hodnota pro kvalitní skóre na konci sekvence.
+        length (int): Délka sekvence.
+        max_quality (int, optional): Maximální ASCII hodnota pro kvalitní skóre na začátku sekvence.
+        min_quality (int, optional): Minimální ASCII hodnota pro kvalitní skóre na konci sekvence.
 
     Returns:
-    str: Řetězec klesajících kvalitních skóre.
+        str: Řetězec klesajících kvalitních skóre.
     """
+    # vychozi hodnoty ASCII na zaklade typickych skore kvality Illumina
+    if max_quality is None:
+        # pokud neni max_quality poskytnuto, nastavi se na vychozi skore vysoke kvality v ASCII
+        # 40 (Phred skore) + 33 (posun pro prevod do ASCII)
+        max_quality = 40 + 33
+    if min_quality is None:
+        # pokud není min_quality poskytnuto, nastavi se na vychozi skore nizsi kvality v ASCII
+        # 30 (Phred skore) + 33 (posun pro prevod do ASCII)
+        min_quality = 30 + 33
+
     quality_scores = []
     for i in range(length):
-        # Lineární interpolace mezi max_quality a min_quality
         quality = int(max_quality - ((max_quality - min_quality) * (i / length)))
-        # Přidání náhodné variace
+        # nahodna variace
         quality = max(min_quality, min(max_quality, quality + random.randint(-5, 5)))
         quality_scores.append(chr(quality))
 
     return ''.join(quality_scores)
 
 
-def write_output(reads, output_format, output_file):
+def write_output(reads, output_format, output_file, max_quality, min_quality):
     """
     Zapíše sekvence do souboru ve formátu FASTA nebo FASTQ.
 
     Args:
-    reads (list of tuples): Seznam sekvencí a jejich názvů.
-                            Každý prvek seznamu je tuple (seq_name, read),
-                            kde 'seq_name' je název sekvence a 'read' je samotná sekvence.
-    output_format (str): Formát výstupního souboru. Může být 'fasta' nebo 'fastq'.
-    output_file (str): Cesta k výstupnímu souboru.
+        reads (list of tuples): Seznam sekvencí a jejich názvů.
+                                Každý prvek seznamu je tuple (seq_name, read),
+                                kde 'seq_name' je název sekvence a 'read' je samotná sekvence.
+        output_format (str): Formát výstupního souboru. Může být 'fasta' nebo 'fastq'.
+        output_file (str): Název výstupního souboru.
+        max_quality (int, optional): Maximální ASCII hodnota pro kvalitní skóre na začátku sekvence (pouze pro FASTQ).
+        min_quality (int, optional): Minimální ASCII hodnota pro kvalitní skóre na konci sekvence (pouze pro FASTQ).
 
     Returns:
-    Funkce vytvoří soubor s daným názvem a zapíše do něj sekvence.
+        Funkce vytvoří soubor s daným názvem a zapíše do něj sekvence.
 
-    Tato funkce nyní generuje náhodné kvalitní skóre pro simulovaná čtení v FASTQ formátu.
+    Pro FASTQ formát je možné nastavit maximální a minimální kvalitu čtení,
+    přičemž pokud tyto hodnoty nejsou zadány, jsou odhadnuty na základě platformy Illumina.
     """
     with open(output_file, 'w') as file:
         for i, (seq_name, read) in enumerate(reads):
             if output_format.lower() == 'fasta':
                 file.write(f'>{seq_name}_read{i}\n{read}\n')
             elif output_format.lower() == 'fastq':
-                quality = generate_quality_scores(len(read))
+                quality = generate_quality_scores(len(read), max_quality, min_quality)
                 file.write(f'@{seq_name}_read{i}\n{read}\n+\n{quality}\n')
 
-# Příklad použití
-seqs = read_fasta('moje.fna')
-reads = simulate_reads(seqs, read_length=75, num_reads=1000, gc_content=0.44)
-write_output(reads, output_format='fastq', output_file='output.fastq')
+
+# Priklad simulace:
+
+seqs = read_fasta('your_fasta_file')
+
+operon_locations = extract_operons_from_gff('path_to_your_gff_file')
+
+strand_info = parse_gtf_gff_for_strand('path_to_your_gff_file')
+
+reads = simulate_reads(seqs, 75, 100, gc_content=None, operon_locations=operon_locations, strand_info=strand_info)
+
+rRNA_percentage = calculate_rrna_percentage('your_fasta_file', 'path_to_your_gff_file', read_fasta)
+print(f"rRNA Percentage: {rRNA_percentage:.2f}%")
+
+write_output(reads, output_format='fastq', output_file='output.fastq', max_quality=None, min_quality=None)
