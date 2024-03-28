@@ -48,7 +48,7 @@ def calculate_gc_content(seq):
     return (seq.count('G') + seq.count('C')) / len(seq)
 
 
-def extract_operons_from_gff(gff_path):
+def extract_operons(gff_path):
     """
     Extrahuje operony a jejich umístění ze souboru GFF.
 
@@ -84,7 +84,7 @@ def extract_operons_from_gff(gff_path):
     return operons
 
 
-def extract_rrna_from_gff(gff_path):
+def extract_rrna(gff_path):
     """
     Zpracovává soubor GFF za účelem extrakce anotací rRNA.
 
@@ -142,7 +142,7 @@ def calculate_rrna_percentage(fasta_path, gff_path, read_fasta_func):
     total_sequence_length = sum(len(seq) for seq in sequences.values())
 
     # extrahovani anotaci rRNA ze souboru GTF/GFF
-    rrna_annotations = extract_rrna_from_gff(gff_path)
+    rrna_annotations = extract_rrna(gff_path)
 
     # vypocet celkove delky sekvenci rRNA
     rrna_total_length = 0
@@ -364,7 +364,7 @@ def write_output(reads, output_format, output_file, max_quality, min_quality):
 
 seqs = read_fasta('your_fasta_file')
 
-operon_locations = extract_operons_from_gff('path_to_your_gff_file')
+operon_locations = extract_operons('path_to_your_gff_file')
 
 strand_info = parse_gtf_gff_for_strand('path_to_your_gff_file')
 
