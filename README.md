@@ -1,5 +1,7 @@
 Simulátor čtení pro bakteriální RNA-Seq.
 
+Přehled funkcí a návod k použití naleznete v přiložené dokumentaci.
+
 last update: 12. 05. 2024
 
 
