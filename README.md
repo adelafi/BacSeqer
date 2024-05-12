@@ -1,5 +1,6 @@
-Read simulator project for bacterial RNA-Seq.
+Simulátor čtení pro bakteriální RNA-Seq.
 
 last update: 12. 05. 2024
 
-![Diagram drawio](https://github.com/adelafi/BacSeqer/assets/99143397/ea8135b8-818e-4042-bcf2-f0d69df007cd)
+
+![Diagram drawio](https://github.com/adelafi/BacSeqer/assets/99143397/a1fb1096-5193-4522-8135-1a9bb115b915)
