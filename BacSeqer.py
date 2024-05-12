@@ -1,12 +1,12 @@
-# BacSeqer
+# BacSeqer - Simulátor čtení pro bakteriální RNA-Seq
 
-# Author: Adela Fialova
-# Python 3.10.
-# Last update: 28. 03. 2024
+# Autor: Adela Fialova (adelafialova21@gmail.com)
+# Python 3.10
 
 
 import random
 import re
+from Bio import SeqIO
 
 
 def read_fasta(file_path):
@@ -19,20 +19,93 @@ def read_fasta(file_path):
     Returns:
         seqs (dict): Slovník, kde klíč je název sekvence a hodnota je samotná sekvence.
     """
-    with open(file_path, 'r') as file:                  # otevreni souboru
-        seqs = {}                                       # prazdny slovnik pro ukladani sekvenci
-        current_seq = ""                                # prazdny retezec pro sestaveni ctene sekvence
-        for line in file:                               # prochazeni souboru po radcich
-            if line.startswith('>'):                    # hledani hlavicky
-                if current_seq:                         # ulozeni nactene sekvence do slovniku seqs s klicem seq_name
+    with open(file_path, 'r') as file:
+        seqs = {}
+        current_seq = ""
+        for line in file:
+            if line.startswith('>'):
+                if current_seq:
                     seqs[seq_name] = current_seq
-                    current_seq = ""                    # resetovani aktualni sekvence na prazdny retezec
-                seq_name = line.strip()                 # nazev nove sekvence extrahovan z aktualniho radku
+                    current_seq = ""
+                seq_name = line.strip()
             else:
-                current_seq += line.strip()             # pokud radek neni hlavicka, je pripojen ke current_seq
+                current_seq += line.strip()
         if current_seq:
-            seqs[seq_name] = current_seq                # ulozeni posledni sekvence
-    return seqs                                         # vraceni slovniku se vsemi sekvencemi
+            seqs[seq_name] = current_seq
+    return seqs
+
+
+def parse_gtf_gff(gtf_gff_file):
+    """
+    Zpracování souboru GTF/GFF a vrácení slovníku všech umístění prvků.
+
+    Args:
+        gtf_gff_file (str): Cesta k souboru GTF/GFF.
+
+    Returns:
+        feature_locations (dict): Slovník obsahující umístění všech prvků, kde klíčem je ID.
+                                  Každá hodnota je trojice obsahující chromozóm, začátek a konec prvku.
+    """
+
+    def extract_id_from_attributes(attributes):
+        """Extrahuje ID."""
+        for attr in attributes.split(';'):
+            if attr.strip().startswith('ID='):
+                return attr.split('=')[1].strip()
+        return None
+
+    feature_locations = {}
+    with open(gtf_gff_file, 'r') as file:
+        for line in file:
+            if line.startswith('#') or line.strip() == '':
+                continue
+            parts = line.strip().split('\t')
+            if len(parts) < 9:
+                continue
+            chrom, source, feature_type, start, end, score, strand, phase, attributes = parts
+            feature_id = extract_id_from_attributes(attributes)
+            if feature_id:
+                feature_locations[feature_id] = (chrom, int(start), int(end))
+    return feature_locations
+
+
+def extract_sequences(fasta_file, gtf_gff_file):
+    """
+    Extrakce sekvencí ze souboru FASTA na základě anotací v souboru GTF/GFF.
+
+    Args:
+        fasta_file (str): Cesta k souboru ve formátu FASTA.
+        gtf_gff_file (str): Cesta k souboru GTF nebo GFF s anotacemi.
+
+    Returns:
+        extracted_seqs (dict): Slovník, kde klíče jsou ID anotací a hodnoty jsou extrahované sekvence.
+    """
+
+    def read_fasta_II(fasta_file):
+        """
+        Načte soubor ve formátu FASTA a vrátí slovník sekvencí.
+
+        Args:
+            fasta_file (str): Cesta k souboru FASTA.
+
+        Returns:
+            seqs (dict): Slovník, kde klíče jsou identifikátory záznamů a hodnoty jsou odpovídající sekvence.
+        """
+
+        seqs = {}
+        with open(fasta_file, 'r') as file:
+            for record in SeqIO.parse(file, "fasta"):
+                seqs[record.id] = str(record.seq)
+        return seqs
+
+    seqs = read_fasta_II(fasta_file)
+    annotations = parse_gtf_gff(gtf_gff_file)
+    extracted_seqs = {}
+    for annotation_id, (chrom, start, end) in annotations.items():
+        if chrom in seqs:
+            extracted_seq = seqs[chrom][start - 1:end]
+            extracted_seqs[annotation_id] = extracted_seq
+    return extracted_seqs
 
 
 def calculate_gc_content(seq):
@@ -48,81 +121,182 @@ def calculate_gc_content(seq):
     return (seq.count('G') + seq.count('C')) / len(seq)
 
 
-def extract_operons(gff_path):
+def adjust_gc_content(read, gc_content):
     """
-    Extrahuje operony a jejich umístění ze souboru GFF.
+    Upraví obsah GC v čtení na požadovaný obsah GC při zachování jeho délky.
 
     Args:
-        gff_path (str): Cesta k souboru GFF.
+        read (str): Sekvence, kterou chceme upravit.
+        gc_content (float): Požadovaný obsah GC (v rozsahu 0 až 1).
+
+    Returns:
+        read (str): Upravená sekvence.
+    """
+
+    current_gc_content = (read.count('G') + read.count('C')) / len(read)
+
+    # Spočítat rozdíl mezi aktuálním a požadovaným GC obsahem
+    diff = gc_content - current_gc_content
+
+    # Počet A nebo T bazí, které je třeba nahradit
+    num_to_replace = int(abs(diff) * len(read))
+
+    # Náhodně vybereme indexy A nebo T bazí, které nahradíme
+    if diff > 0:
+        at_indices = [i for i, base in enumerate(read) if base in ('A', 'T')]
+        replace_indices = random.sample(at_indices, num_to_replace)
+
+        # Nahradíme A nebo T na vybraných pozicích
+        for idx in replace_indices:
+            if read[idx] == 'A':
+                read = read[:idx] + random.choice('GC') + read[idx + 1:]
+            else:  # read[idx] == 'T'
+                read = read[:idx] + random.choice('GC') + read[idx + 1:]
+    elif diff < 0:
+        gc_indices = [i for i, base in enumerate(read) if base in ('G', 'C')]
+        replace_indices = random.sample(gc_indices, num_to_replace)
+
+        # Nahradíme G nebo C na vybraných pozicích
+        for idx in replace_indices:
+            if read[idx] == 'G':
+                read = read[:idx] + random.choice('AT') + read[idx + 1:]
+            else:  # read[idx] == 'C'
+                read = read[:idx] + random.choice('AT') + read[idx + 1:]
+    elif diff == 0:
+        pass
+
+    return read
+
+
+def extract_operons(file_path):
+    """
+    Extrahuje operony a jejich umístění ze souboru GTF nebo GFF.
+
+    Args:
+        file_path (str): Cesta k souboru GTF nebo GFF.
 
     Returns:
         operons (dict): Slovník s názvy operonů jako klíči a jejich umístěními jako hodnotami.
     """
     operons = {}
-    with open(gff_path, 'r') as file:
+    with open(file_path, 'r') as file:
         for line in file:
             if line.startswith('#') or line.strip() == "":
-                continue  # preskoceni hlavicek a prazdnych radku
+                continue  # Přeskočení hlaviček a prázdných řádků
+
             parts = line.strip().split('\t')
             if len(parts) < 9:
-                continue  # preskoceni neuplnych radku
+                continue  # Přeskočení neúplných řádků
 
             attributes = parts[8]
 
-            # kontrola pritomnosti "Operon" v atributu "Note"
-            note_match = re.search(r'Note=Operon\s+(\d+)', attributes)
+            # Zpracování GTF/GFF atributů
+            note_match = None
+            if 'Note=' in attributes:  # GFF formát
+                note_match = re.search(r'Note=Operon\s+(\d+)', attributes)
+            elif 'note "' in attributes:  # GTF formát
+                note_match = re.search(r'note\s+"Operon\s+(\d+)"', attributes)
+
             if note_match:
                 operon_number = note_match.group(1)
                 operon_name = f"Operon {operon_number}"
                 location = (parts[0], int(parts[3]), int(parts[4]))  # (seqname, začátek, konec)
 
-                # pridat umisteni do slovniku, pripojit, pokud operon uz existuje
                 if operon_name in operons:
                     operons[operon_name].append(location)
                 else:
                     operons[operon_name] = [location]
+
     return operons
 
 
-def extract_rrna(gff_path):
+def extract_rrna(file_path):
     """
-    Zpracovává soubor GFF za účelem extrakce anotací rRNA.
+    Zpracovává soubor GFF nebo GTF za účelem extrakce anotací rRNA. Vrátí slovník, kde klíčem je seq_id s indexem a hodnotami
+    jsou start a end anotace rRNA.
 
     Args:
-        gff_path (str): Cesta k souboru GFF.
+        file_path (str): Cesta k souboru GFF nebo GTF.
 
     Returns:
-        rrna_annotations (list): Seznam slovníků, kde každý reprezentuje anotaci rRNA s klíči jako 'start', 'end',
-                                 'type' a 'attributes'.
+        rrna_dict (dict): Slovník, kde klíče jsou seq_id s indexem a hodnoty jsou slovníky s klíči 'start' a 'end'.
     """
-    rrna_annotations = []
+    rrna_dict = {}
+    rrna_index = {}
 
-    with open(gff_path, 'r') as file:
+    with open(file_path, 'r') as file:
         for line in file:
             if line.startswith('#') or line.strip() == '':
-                continue  # preskocit komentare a prazdne radky
+                continue  # Přeskočit komentáře a prázdné řádky
 
             fields = line.strip().split('\t')
             if len(fields) == 9:
-                # rozdeleni radku na jednotlive casti
                 seq_id, source, feature_type, start, end, score, strand, phase, attributes = fields
 
                 if feature_type == 'rRNA':
-                    attr_dict = {}
-                    for attr in attributes.split(';'):
-                        # rozdeleni atributu na klice a hodnoty
-                        key, value = attr.split('=')
-                        attr_dict[key] = value
+                    # Rozlišení formátu na základě obsahu atributů
+                    if 'gene_id "' in attributes:  # GTF formát
+                        gene_id = next((item.split('"')[1] for item in attributes.split(';') if 'gene_id "' in item),
+                                       None)
+                    elif 'ID=' in attributes:  # GFF formát
+                        gene_id = next((item.split('=')[1] for item in attributes.split(';') if item.startswith('ID=')),
+                                       None)
 
-                    # pridani anotace rRNA do seznamu
-                    rrna_annotations.append({
-                        'seq_id': seq_id,  # identifikator sekvence
-                        'start': int(start),  # pocatecni pozice
-                        'end': int(end),  # koncova pozice
-                        'strand': strand,  # smer retezce
-                        'attributes': attr_dict  # dalsi atributy
-                    })
-    return rrna_annotations
+                    if gene_id:
+                        index = rrna_index.get(gene_id, 0) + 1
+                        rrna_dict[f"{gene_id}_{index}"] = {'start': int(start), 'end': int(end)}
+                        rrna_index[gene_id] = index
+
+    return rrna_dict
+
+
+def extract_cds(file_path, start_extension, end_extension):
+    """
+    Extrakce CDS (Coding DNA Sequences) z GTF/GFF souboru.
+
+    Args:
+        file_path (str): Cesta k GTF/GFF souboru.
+        start_extension (int, optional): Počet nukleotidů přidaných na začátek CDS.
+        end_extension (int, optional): Počet nukleotidů přidaných na konec CDS.
+
+    Returns:
+        cds_dict (dict): Slovník, kde klíče jsou identifikátory genů nebo transkriptů a hodnoty jsou seznamy tuplů
+        (start, end) CDS.
+    """
+    cds_dict = {}
+
+    with open(file_path, 'r') as file:
+        for line in file:
+            if line.startswith('#') or line.strip() == '':
+                continue
+
+            fields = line.strip().split('\t')
+            if len(fields) < 9:
+                continue
+
+            feature_type = fields[2]
+            if feature_type == 'CDS':
+                start, end = int(fields[3]), int(fields[4])
+                start = max(1, start - start_extension)
+                end += end_extension
+
+                attributes = fields[8]
+                gene_id = None
+
+                # Pro GTF formát
+                if "gene_id" in attributes:
+                    gene_id = [attr for attr in attributes.split(';') if 'gene_id' in attr][0].split('"')[1]
+                # Pro GFF3 formát
+                elif "ID=" in attributes:
+                    gene_id = [attr for attr in attributes.split(';') if 'ID=' in attr][0].split('=')[1]
+
+                if gene_id:
+                    if gene_id in cds_dict:
+                        cds_dict[gene_id].append((start, end))
+                    else:
+                        cds_dict[gene_id] = [(start, end)]
+
+    return cds_dict
 
 
 def calculate_rrna_percentage(fasta_path, gff_path, read_fasta_func):
@@ -137,50 +311,24 @@ def calculate_rrna_percentage(fasta_path, gff_path, read_fasta_func):
     Returns:
         float: Procento rRNA v celkovém množství sekvencí.
     """
-    # nacteni sekvenci ze souboru FASTA
+    # Načtení sekvencí ze souboru FASTA
     sequences = read_fasta_func(fasta_path)
     total_sequence_length = sum(len(seq) for seq in sequences.values())
 
-    # extrahovani anotaci rRNA ze souboru GTF/GFF
-    rrna_annotations = extract_rrna(gff_path)
+    # Extrahování anotací rRNA ze souboru GTF/GFF
+    rrna_dict = extract_rrna(gff_path)
 
-    # vypocet celkove delky sekvenci rRNA
+    # Výpočet celkové délky sekvencí rRNA
     rrna_total_length = 0
-    for annotation in rrna_annotations:
-        start, end = annotation['start'], annotation['end']
+    for seq_id, rrna_info in rrna_dict.items():
+        start, end = rrna_info['start'], rrna_info['end']
         rrna_total_length += end - start + 1
 
-    # vypocet a vraceni procentualniho podilu rRNA
+    # Výpočet a vrácení procentuálního podílu rRNA
     return (rrna_total_length / total_sequence_length) * 100
 
 
-def extract_gene_name(attributes, file_type):
-    """
-    Extrahuje název genu z pole atributů.
-    Pracuje s formáty GTF/GFF.
-
-    Args:
-        attributes (str): Řetězec obsahující atributy.
-        file_type (str): Typ souboru ('GTF' nebo 'GTF'/'GFF3').
-
-    Returns:
-        str nebo None: Název genu nebo None, pokud není nalezen.
-    """
-    if file_type == 'GTF':
-        # GTF format: gene_id "gene_name"; ...
-        for attribute in attributes.split(';'):
-            if attribute.strip().startswith('gene_id'):
-                return attribute.split('"')[1]
-    else:
-        # GFF3 format: ID=gene0;Name=gene_name;...
-        for attribute in attributes.split(';'):
-            key, _, value = attribute.partition('=')
-            if key == 'ID' or key == 'Name':
-                return value
-    return None
-
-
-def parse_gtf_gff_for_strand(file_path):
+def parse_for_strand(file_path):
     """
     Zpracovává soubor GTF nebo GFF3 a vrací slovník, kde jsou klíče názvy/ID genů
     a hodnoty informace o vláknech ('+' nebo '-').
@@ -191,6 +339,32 @@ def parse_gtf_gff_for_strand(file_path):
     Returns:
         strand_info (dict): Slovník s názvy/ID genů jako klíči a informacemi o vláknech jako hodnotami.
     """
+
+    def extract_gene_name(attributes, file_type):
+        """
+        Extrahuje název genu z pole atributů.
+        Pracuje s formáty GTF/GFF.
+
+        Args:
+            attributes (str): Řetězec obsahující atributy.
+            file_type (str): Typ souboru ('GTF' nebo 'GTF'/'GFF3').
+
+        Returns:
+            str nebo None: Název genu nebo None, pokud není nalezen.
+        """
+        if file_type == 'GTF':
+            # GTF format: gene_id "gene_name"; ...
+            for attribute in attributes.split(';'):
+                if attribute.strip().startswith('gene_id'):
+                    return attribute.split('"')[1]
+        else:
+            # GFF3 format: ID=gene0;Name=gene_name;...
+            for attribute in attributes.split(';'):
+                key, _, value = attribute.partition('=')
+                if key == 'ID' or key == 'Name':
+                    return value
+        return None
+
     strand_info = {}
     file_type = 'GTF' if file_path.endswith('.gtf') else 'GFF3'
     with open(file_path, 'r') as file:
@@ -208,6 +382,33 @@ def parse_gtf_gff_for_strand(file_path):
     return strand_info
 
 
+def create_long_mrna(seqs, operon_locations):
+    """
+    Vytvoří dlouhou mRNA sekvenci na základě lokací operonů.
+
+    Args:
+        seqs (dict): Slovník sekvencí, kde klíče jsou identifikátory genů a hodnoty jsou DNA sekvence.
+        operon_locations (dict): Slovník s lokacemi operonů, kde klíče jsou identifikátory operonů a hodnoty jsou
+        seznamy identifikátorů genů v operonu.
+
+    Returns:
+        long_mrna_sequences (dict): Slovník s dlouhými mRNA sekvencemi pro každý operon.
+    """
+    long_mrna_sequences = {}
+
+    for operon_id, gene_ids in operon_locations.items():
+        long_mrna_sequence = ''
+        for gene_id in gene_ids:
+            gene_sequence = seqs.get(gene_id, '')
+            if gene_sequence:
+                long_mrna_sequence += gene_sequence
+
+        if long_mrna_sequence:  # Zajištění, že výsledná mRNA sekvence není prázdná
+            long_mrna_sequences[operon_id] = long_mrna_sequence
+
+    return long_mrna_sequences
+
+
 def reverse_complement(seq):
     """
     Vrací reverzní komplementární sekvenci pro zadanou DNA sekvenci.
@@ -218,71 +419,81 @@ def reverse_complement(seq):
     Returns:
         str: Reverzní komplementární sekvence k zadané DNA sekvenci.
     """
-    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
+    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', "Y": random.choice("ACGT")}
     return ''.join(complement[base] for base in reversed(seq))
 
 
-def simulate_reads(seqs, read_length, num_reads, gc_content, operon_locations, strand_info):
+def simulate_reads(seqs, read_length, num_reads, gc_content, cds_locations, operon_locations, rrna_locations,
+                   rrna_percentage, strand_ori, strand_info):
     """
     Simuluje čtení na základě poskytnutých sekvencí.
 
     Args:
         seqs (dict): Slovník sekvencí, kde klíče jsou názvy sekvencí a hodnoty jsou sekvence.
         read_length (int): Délka čtení.
-        num_reads (int): Počet čtení, které mají být simulovány pro každou sekvenci.
+        num_reads (int): Počet čtení, která mají být simulována pro každou sekvenci.
         gc_content (float nebo None): Obsah GC. Pokud není poskytnut, bude vypočítán.
-        operon_locations (dict nebo None): Slovník s lokacemi operonů pro každou sekvenci.
-        strand_info (dict nebo None): Informace o vláknech pro každou sekvenci.
+        cds_locations (dict nebo None): Slovník s lokacemi kódujících oblastí.
+        operon_locations (dict nebo None): Slovník s lokacemi operonů.
+        rrna_locations (dict nebo None): Slovník s lokacemi rRNA.
+        rrna_percentage (float nebo None): Požadované procentuální zastoupení rRNA ve vstupní knihovně.
+        strand_ori (str): Požadovaná strand orientation. (+ nebo -)
+        strand_info (dict nebo None): Informace o orientaci vláken pro každou sekvenci.
 
     Returns:
-        reads (list): Seznam čtení jako dvojic (název_sekvence, čtení).
+        reads (list): Seznam čtení jako dvojic (název sekvence, čtení).
         """
     reads = []
+    if rrna_percentage:
+        rrna_seqs = seqs
 
-    # prochazeni kazde sekvence a generovani cteni
-    for seq_name, seq in seqs.items():
-        strand = strand_info.get(seq_name, "both") if strand_info else "both"
+    if cds_locations:
+        for gene_id, locations in cds_locations.items():
+            for start, end in locations:
+                cds_seq = seqs.get(gene_id, '')[start:end]
+                if cds_seq:  # Zajištění, že sekvence není prázdná
+                    seqs[gene_id] = cds_seq
+
+    if operon_locations:
+        operons = create_long_mrna(seqs, operon_locations)
+        to_add = len(operon_locations.keys())
+        for i in range(0, to_add):
+            updated_operons = {f"{key}_{i}": value for key, value in operons.items()}
+            seqs.update(updated_operons)
+
+    if rrna_percentage:
+        num_dna = len(seqs)
+        rrna_needed = int((num_dna * rrna_percentage) / (100 - rrna_percentage))
+        rrnas = {}
+        for i, id in enumerate(rrna_locations.keys()):
+            id = id[:-2]
+            rrna = rrna_seqs[id]
+            new_key = f"rrna_{i}_{id}"
+            rrnas[new_key] = rrna
+        for i in range(0, rrna_needed):
+            selected_key = random.choice(list(rrnas.keys()))
+            seqs[selected_key] = rrnas[selected_key]
+
+    while len(reads) != num_reads:
+        seq_name = random.choice(list(seqs.keys()))
+        seq = seqs[seq_name]
 
         # pokud neni obsah GC poskytnut, vypocita se pomoci funkce calculate_gc_content
         if gc_content is None:
             gc_content = calculate_gc_content(seq)
 
-        if operon_locations:
-            operons = operon_locations.get(seq_name, [])
-
-            # generovani zadaneho poctu cteni pro aktualni sekvenci
-            for _ in range(num_reads):
-                # nahodny vyber pocatecni pozice pro cteni
-                start_pos = random.randint(0, len(seq) - read_length)
-                read_gc_content = gc_content
-
-                # kontrola, zda je cteni v oblasti nejakeho operonu, a nastaveni prislusneho GC obsahu
-                for start, end in operons:
-                    if start <= start_pos < end:
-                        read_gc_content = gc_content[(start, end)]
-                        break
-
-                read = ""
-                for _ in range(read_length):
-                    if random.random() < gc_content:
-                        read += random.choice(["G", "C"])
-                    else:
-                        read += random.choice(["A", "T"])
-                if strand == "reversed" or (strand == "both" and random.choice([True, False])):
+        # generovani zadaneho poctu cteni pro aktualni sekvenci
+        if len(seq) >= read_length:
+            read_start = random.randint(0, len(seq) - read_length)
+            read = seq[read_start:read_start + read_length]
+            read = adjust_gc_content(read, gc_content)
+            if strand_ori:
+                if strand_info[seq_name] != strand_ori:
                     read = reverse_complement(read)
-                reads.append((seq_name, read))
+            reads.append((seq_name, read))
+        else:
+            continue
 
-        else:  # jinak simulovano bez zohledneni operonu
-            for _ in range(num_reads):
-                read = ""
-                for _ in range(read_length):
-                    if random.random() < gc_content:
-                        read += random.choice(["G", "C"])
-                    else:
-                        read += random.choice(["A", "T"])
-                if strand == "reversed" or (strand == "both" and random.choice([True, False])):
-                    read = reverse_complement(read)
-                reads.append((seq_name, read))
     return reads
 
 
@@ -360,17 +571,3 @@ def write_output(reads, output_format, output_file, max_quality, min_quality):
                 file.write(f'@{seq_name}_read{i}\n{read}\n+\n{quality}\n')
 
 
-# Priklad simulace:
-
-seqs = read_fasta('your_fasta_file')
-
-operon_locations = extract_operons('path_to_your_gff_file')
-
-strand_info = parse_gtf_gff_for_strand('path_to_your_gff_file')
-
-reads = simulate_reads(seqs, 75, 100, gc_content=None, operon_locations=operon_locations, strand_info=strand_info)
-
-rRNA_percentage = calculate_rrna_percentage('your_fasta_file', 'path_to_your_gff_file', read_fasta)
-print(f"rRNA Percentage: {rRNA_percentage:.2f}%")
-
-write_output(reads, output_format='fastq', output_file='output.fastq', max_quality=None, min_quality=None)
