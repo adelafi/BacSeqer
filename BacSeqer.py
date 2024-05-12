@@ -35,40 +35,6 @@ def read_fasta(file_path):
     return seqs
 
 
-def parse_gtf_gff(gtf_gff_file):
-    """
-    Zpracování souboru GTF/GFF a vrácení slovníku všech umístění prvků.
-
-    Args:
-        gtf_gff_file (str): Cesta k souboru GTF/GFF.
-
-    Returns:
-        feature_locations (dict): Slovník obsahující umístění všech prvků, kde klíčem je ID.
-                                  Každá hodnota je trojice obsahující chromozóm, začátek a konec prvku.
-    """
-
-    def extract_id_from_attributes(attributes):
-        """Extrahuje ID."""
-        for attr in attributes.split(';'):
-            if attr.strip().startswith('ID='):
-                return attr.split('=')[1].strip()
-        return None
-
-    feature_locations = {}
-    with open(gtf_gff_file, 'r') as file:
-        for line in file:
-            if line.startswith('#') or line.strip() == '':
-                continue
-            parts = line.strip().split('\t')
-            if len(parts) < 9:
-                continue
-            chrom, source, feature_type, start, end, score, strand, phase, attributes = parts
-            feature_id = extract_id_from_attributes(attributes)
-            if feature_id:
-                feature_locations[feature_id] = (chrom, int(start), int(end))
-    return feature_locations
-
-
 def extract_sequences(fasta_file, gtf_gff_file):
     """
     Extrakce sekvencí ze souboru FASTA na základě anotací v souboru GTF/GFF.
@@ -98,6 +64,39 @@ def extract_sequences(fasta_file, gtf_gff_file):
                 seqs[record.id] = str(record.seq)
         return seqs
 
+    def parse_gtf_gff(gtf_gff_file):
+        """
+        Zpracování souboru GTF/GFF a vrácení slovníku všech umístění prvků.
+
+        Args:
+            gtf_gff_file (str): Cesta k souboru GTF/GFF.
+
+        Returns:
+            feature_locations (dict): Slovník obsahující umístění všech prvků, kde klíčem je ID.
+                                      Každá hodnota je trojice obsahující chromozóm, začátek a konec prvku.
+        """
+
+        def extract_id_from_attributes(attributes):
+            """Extrahuje ID."""
+            for attr in attributes.split(';'):
+                if attr.strip().startswith('ID='):
+                    return attr.split('=')[1].strip()
+            return None
+
+        feature_locations = {}
+        with open(gtf_gff_file, 'r') as file:
+            for line in file:
+                if line.startswith('#') or line.strip() == '':
+                    continue
+                parts = line.strip().split('\t')
+                if len(parts) < 9:
+                    continue
+                chrom, source, feature_type, start, end, score, strand, phase, attributes = parts
+                feature_id = extract_id_from_attributes(attributes)
+                if feature_id:
+                    feature_locations[feature_id] = (chrom, int(start), int(end))
+        return feature_locations
+
     seqs = read_fasta_II(fasta_file)
     annotations = parse_gtf_gff(gtf_gff_file)
     extracted_seqs = {}
@@ -116,7 +115,7 @@ def calculate_gc_content(seq):
         seq (str): Sekvence.
 
     Returns:
-        gc_content (float): %GC content načtené sekvence.
+        float: %GC content načtené sekvence.
     """
     return (seq.count('G') + seq.count('C')) / len(seq)
 
@@ -432,11 +431,11 @@ def simulate_reads(seqs, read_length, num_reads, gc_content, cds_locations, oper
         seqs (dict): Slovník sekvencí, kde klíče jsou názvy sekvencí a hodnoty jsou sekvence.
         read_length (int): Délka čtení.
         num_reads (int): Počet čtení, která mají být simulována pro každou sekvenci.
-        gc_content (float nebo None): Obsah GC. Pokud není poskytnut, bude vypočítán.
+        gc_content (float nebo None): Požadovaný obsah GC.
         cds_locations (dict nebo None): Slovník s lokacemi kódujících oblastí.
         operon_locations (dict nebo None): Slovník s lokacemi operonů.
         rrna_locations (dict nebo None): Slovník s lokacemi rRNA.
-        rrna_percentage (float nebo None): Požadované procentuální zastoupení rRNA ve vstupní knihovně.
+        rrna_percentage (float nebo None): Požadované procentuální zastoupení rRNA ve vstupní knihovně (0 až 100).
         strand_ori (str): Požadovaná strand orientation. (+ nebo -)
         strand_info (dict nebo None): Informace o orientaci vláken pro každou sekvenci.
 
@@ -510,39 +509,6 @@ def phred_to_ascii(phred_score):
     return chr(phred_score + 33)
 
 
-def generate_quality_scores(length, max_quality, min_quality):
-    """
-    Generuje klesající kvalitní skóre pro danou délku sekvence.
-    Pokud nejsou zadány hraniční hodnoty, jsou odhadnuty na základě platformy Illumina.
-
-    Args:
-        length (int): Délka sekvence.
-        max_quality (int, optional): Maximální ASCII hodnota pro kvalitní skóre na začátku sekvence.
-        min_quality (int, optional): Minimální ASCII hodnota pro kvalitní skóre na konci sekvence.
-
-    Returns:
-        str: Řetězec klesajících kvalitních skóre.
-    """
-    # vychozi hodnoty ASCII na zaklade typickych skore kvality Illumina
-    if max_quality is None:
-        # pokud neni max_quality poskytnuto, nastavi se na vychozi skore vysoke kvality v ASCII
-        # 40 (Phred skore) + 33 (posun pro prevod do ASCII)
-        max_quality = 40 + 33
-    if min_quality is None:
-        # pokud není min_quality poskytnuto, nastavi se na vychozi skore nizsi kvality v ASCII
-        # 30 (Phred skore) + 33 (posun pro prevod do ASCII)
-        min_quality = 30 + 33
-
-    quality_scores = []
-    for i in range(length):
-        quality = int(max_quality - ((max_quality - min_quality) * (i / length)))
-        # nahodna variace
-        quality = max(min_quality, min(max_quality, quality + random.randint(-5, 5)))
-        quality_scores.append(chr(quality))
-
-    return ''.join(quality_scores)
-
-
 def write_output(reads, output_format, output_file, max_quality, min_quality):
     """
     Zapíše sekvence do souboru ve formátu FASTA nebo FASTQ.
@@ -562,6 +528,39 @@ def write_output(reads, output_format, output_file, max_quality, min_quality):
     Pro FASTQ formát je možné nastavit maximální a minimální kvalitu čtení,
     přičemž pokud tyto hodnoty nejsou zadány, jsou odhadnuty na základě platformy Illumina.
     """
+
+    def generate_quality_scores(length, max_quality, min_quality):
+        """
+        Generuje klesající kvalitní skóre pro danou délku sekvence.
+        Pokud nejsou zadány hraniční hodnoty, jsou odhadnuty na základě platformy Illumina.
+
+        Args:
+            length (int): Délka sekvence.
+            max_quality (int, optional): Maximální ASCII hodnota pro kvalitní skóre na začátku sekvence.
+            min_quality (int, optional): Minimální ASCII hodnota pro kvalitní skóre na konci sekvence.
+
+        Returns:
+            str: Řetězec klesajících kvalitních skóre.
+        """
+        # vychozi hodnoty ASCII na zaklade typickych skore kvality Illumina
+        if max_quality is None:
+            # pokud neni max_quality poskytnuto, nastavi se na vychozi skore vysoke kvality v ASCII
+            # 40 (Phred skore) + 33 (posun pro prevod do ASCII)
+            max_quality = 40 + 33
+        if min_quality is None:
+            # pokud není min_quality poskytnuto, nastavi se na vychozi skore nizsi kvality v ASCII
+            # 30 (Phred skore) + 33 (posun pro prevod do ASCII)
+            min_quality = 30 + 33
+
+        quality_scores = []
+        for i in range(length):
+            quality = int(max_quality - ((max_quality - min_quality) * (i / length)))
+            # nahodna variace
+            quality = max(min_quality, min(max_quality, quality + random.randint(-5, 5)))
+            quality_scores.append(chr(quality))
+
+        return ''.join(quality_scores)
+
     with open(output_file, 'w') as file:
         for i, (seq_name, read) in enumerate(reads):
             if output_format.lower() == 'fasta':
